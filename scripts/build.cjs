@@ -1,0 +1,17 @@
+'use strict';
+const fs=require('node:fs');
+const path=require('node:path');
+const vm=require('node:vm');
+const {buildSync}=require('esbuild');
+const root=path.resolve(__dirname,'..');
+const helper=buildSync({entryPoints:[path.join(root,'src','dom-builder.mjs')],bundle:true,platform:'browser',format:'iife',globalName:'__gfwDOM',minify:true,write:false}).outputFiles[0].text;
+let widget=fs.readFileSync(path.join(root,'src','widget.js'),'utf8');
+if(!widget.includes('__GFW_DEFAULT_SPRITE__') || !widget.includes("  'use strict';"))throw Error('Unknown widget source');
+const sprite=fs.readFileSync(path.join(root,'assets','catgirl.webp')).toString('base64');
+widget=widget.replace('__GFW_DEFAULT_SPRITE__','data:image/webp;base64,'+sprite).replace("  'use strict';","  'use strict';\n"+helper);
+const notices=['parse5','entities'].map(n=>fs.readFileSync(path.join(root,'third_party',n+'-LICENSE.txt'),'utf8')).join('\n\n');
+widget+='\n/* Third-party license notices\n'+notices.replace(/\*\//g,'* /')+'\n*/\n';
+new vm.Script(widget);
+const dist=path.join(root,'dist');fs.mkdirSync(dist,{recursive:true});
+fs.writeFileSync(path.join(dist,'gemini-fox-widget.user.js'),widget);
+console.log('Built desktop renderer with bundled artwork and license notices.');

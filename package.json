@@ -1,0 +1,20 @@
+{
+  "name": "gemini-quota-widget",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Gemini Windows floating catgirl widget with official five-hour and weekly usage",
+  "license": "MIT",
+  "engines": { "node": ">=22" },
+  "scripts": {
+    "build": "node scripts/build.cjs",
+    "test": "npm run build && node --test tests/official-quota.test.cjs && node tests/widget-smoke.cjs dist/gemini-fox-widget.user.js",
+    "audit:release": "node scripts/audit-release.cjs",
+    "release:zip": "node scripts/package.cjs"
+  },
+  "dependencies": {
+    "acorn": "8.19.0",
+    "esbuild": "0.28.2",
+    "linkedom": "0.18.14",
+    "parse5": "8.0.1"
+  }
+}

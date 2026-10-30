@@ -1,0 +1,15 @@
+node_modules/
+dist/
+build/
+releases/
+*.asar
+*.exe
+*.lnk
+*.log
+*.sqlite*
+*.db
+.env*
+installation.json
+*runtime-verification.json
+gemini-official-quota.json
+gemini-fox-widget-status.json
