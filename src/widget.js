@@ -1,4 +1,4 @@
-// Gemini Quota Widget v0.1.0
+// Gemini Quota Widget v0.5.0
 // MIT licensed code; artwork has separate terms in assets/README.md.
 // Design reference: MeteorNOX/DeepSeek-Balance-Whale-Widget (MIT).
 // Desktop host required: this is not a standalone quota-reading userscript.
@@ -68,7 +68,8 @@
   function saveStorage(key, val) {
     try {
       localStorage.setItem(key, JSON.stringify(val));
-    } catch (e) {}
+      return true;
+    } catch (e) { return false; }
   }
 
   const defaultConfig = {
@@ -128,7 +129,7 @@
       syncChannel.onmessage = (ev) => {
         if (ev && ev.data && ev.data.type === "ledger_update") {
           ledger = loadStorage(STORAGE_KEY_LEDGER, defaultLedger);
-          refreshRealtimeUI(false);
+          refreshRealtimeUI();
         }
       };
     }
@@ -137,10 +138,10 @@
   window.addEventListener("storage", (ev) => {
     if (ev.key === STORAGE_KEY_LEDGER) {
       ledger = loadStorage(STORAGE_KEY_LEDGER, defaultLedger);
-      refreshRealtimeUI(false);
+      refreshRealtimeUI();
     } else if (ev.key === STORAGE_KEY_CFG) {
       cfg = loadStorage(STORAGE_KEY_CFG, defaultConfig);
-      refreshRealtimeUI(false);
+      refreshRealtimeUI();
     }
   });
 
@@ -177,17 +178,30 @@
   }
 
   function getQuotaMetrics() {
-    const q=window.__gfwOfficialQuota;
-    const valid=q && Date.now()-q.updatedAt < 90000 && q.fiveHour && q.week;
+    const sample = window.__gfwOfficialQuota;
+    const updatedAt = sample?.updatedAt;
+    const age = Number.isFinite(updatedAt) ? Date.now() - updatedAt : -1;
+    const fiveHour = sample?.fiveHour?.remainingPct;
+    const week = sample?.week?.remainingPct;
+    const hasSample = age >= 0 && updatedAt > 0
+      && [fiveHour, week].every(value => Number.isFinite(value) && value >= 0 && value <= 100);
+    const valid = hasSample && age < 90000;
+    const status = valid ? 'fresh' : hasSample ? 'stale' : 'waiting';
+    const warning = Math.max(1, Math.min(90, Number(cfg.warnThresholdPct) || 20));
+    const resetLabel = entry => {
+      const text = typeof entry?.resetText === 'string' ? entry.resetText.trim() : '';
+      return text ? '重置：' + text : '重置时间待同步';
+    };
     return {
-      left5hPct: valid ? q.fiveHour.remainingPct : null,
-      leftWeekPct: valid ? q.week.remainingPct : null,
-      reset5hText: valid ? '重置：'+q.fiveHour.resetText : '正在读取 Google 用量…',
-      resetWeekText: valid ? '重置：'+q.week.resetText : '等待官方数据同步',
-      isWarn5h: valid && q.fiveHour.remainingPct<=20,
-      isWarnWeek: valid && q.week.remainingPct<=20,
+      left5hPct: valid ? fiveHour : null,
+      leftWeekPct: valid ? week : null,
+      reset5hText: resetLabel(valid ? sample.fiveHour : null),
+      resetWeekText: resetLabel(valid ? sample.week : null),
+      isWarn5h: valid && fiveHour <= warning,
+      isWarnWeek: valid && week <= warning,
       sourceLabel: valid ? 'Google 官方用量 · 30秒刷新' : '尚未取得有效官方数据',
-      updatedAt: valid ? q.updatedAt : null
+      updatedAt: valid ? updatedAt : null,
+      status
     };
   }
 
@@ -206,6 +220,7 @@
   }
 
   function playSynthSound(kind, customSet, customVol) {
+    if (kind === 'hiss' && !cfg.soundOn) return;
     const nowMs = performance.now();
     if ((kind === "press" || kind === "release") && nowMs - lastPressSoundMs < 90) return;
     if (kind === "press") lastPressSoundMs = nowMs;
@@ -218,7 +233,22 @@
     const t0 = actx.currentTime;
     const set = customSet || cfg.soundSet;
 
-    if (kind === "press" || kind === "release") {
+    if (kind === 'hiss') {
+      // A short, softly enveloped breath; no remote sample or media download.
+      const duration = 0.24;
+      const buffer = actx.createBuffer(1, Math.ceil(actx.sampleRate * duration), actx.sampleRate);
+      const data = buffer.getChannelData(0);
+      for (let i = 0; i < data.length; i++) data[i] = Math.random() * 2 - 1;
+      const source = actx.createBufferSource(); source.buffer = buffer;
+      const filter = actx.createBiquadFilter(); filter.type = 'bandpass'; filter.frequency.value = 3200; filter.Q.value = 0.7;
+      const gain = actx.createGain();
+      gain.gain.setValueAtTime(0.001, t0);
+      gain.gain.linearRampToValueAtTime(vol * 0.18, t0 + 0.025);
+      gain.gain.exponentialRampToValueAtTime(0.001, t0 + duration);
+      source.connect(filter); filter.connect(gain); gain.connect(actx.destination);
+      source.onended = () => { source.disconnect(); filter.disconnect(); gain.disconnect(); };
+      source.start(t0); source.stop(t0 + duration);
+    } else if (kind === "press" || kind === "release") {
       if (!cfg.soundOn && customVol === undefined) return;
       const osc = actx.createOscillator();
       const gain = actx.createGain();
@@ -456,16 +486,6 @@
         line-height: 1.25;
         margin-bottom: calc(var(--gfw-u) * 2);
       }
-      .gfw-min-refresh {
-        position: absolute;
-        right: 8%;
-        top: 50%;
-        transform: translateY(-50%);
-        font-size: calc(var(--gfw-u) * 34);
-        font-weight: 800;
-        color: #8b5cf6;
-        line-height: 1;
-      }
       .gfw-min-block {
         width: 100%;
         display: flex;
@@ -522,6 +542,8 @@
         text-align: left;
         line-height: 1.2;
         white-space: nowrap;
+        overflow: hidden;
+        text-overflow: ellipsis;
       }
       .gfw-quote-box {
         width: 100%;
@@ -729,11 +751,7 @@
               <ellipse cx="486" cy="478" rx="44" ry="18" transform="rotate(-6 486 478)" fill="#ffffff" stroke="none"></ellipse>
             </g>
           </svg>
-          <div class="gfw-text" id="gfw-text">
-            <div class="gfw-line-a" id="gfw-line-a">剩余额度</div>
-            <div class="gfw-line-b" id="gfw-line-b">100%</div>
-            <div class="gfw-line-c" id="gfw-line-c">5 小时 100% · 每周 100%</div>
-          </div>
+          <div class="gfw-text" id="gfw-text"></div>
           <div class="gfw-bubble-hitbox" id="gfw-bubble-hitbox" title="点击切换猫娘台词 / 再次点击关闭气泡"></div>
         </div>
         <div class="gfw-img-wrap" id="gfw-img-wrap" title="单击猫娘弹出实时额度 / Q弹一下 · 单击气泡框切换台词 · 右键打开菜单">
@@ -935,32 +953,8 @@
 
     let bubbleTimer = null;
     let bubbleMode = "closed"; // "closed" | "quota" | "quote"
-    let lastRandomIdx = -1;
-    let anim5hId = null;
-    let animWeekId = null;
-    let prevVal5h = 100;
-    let prevValWeek = 100;
-
-    function animateValue(el, fromVal, toVal, suffix, durationMs) {
-      if (!el) return null;
-      if (fromVal === toVal) {
-        el.textContent = toVal + suffix;
-        return null;
-      }
-      const start = performance.now();
-      let frameId = null;
-      function step(now) {
-        const p = Math.min(1, (now - start) / durationMs);
-        const ease = 1 - Math.pow(1 - p, 3);
-        const curr = Math.round(fromVal + (toVal - fromVal) * ease);
-        el.textContent = curr + suffix;
-        if (p < 1) {
-          frameId = requestAnimationFrame(step);
-        }
-      }
-      frameId = requestAnimationFrame(step);
-      return frameId;
-    }
+    let lastRandomText = '';
+    let lastQuotaRenderKey = null;
 
     function fitQuoteText() {
       const qEl = textEl.querySelector(".gfw-wrap-quote");
@@ -978,93 +972,69 @@
       }
     }
 
-    function renderQuotaBubble(withRollAnim = true, headerText = "剩余额度") {
+    function renderQuotaBubble() {
       const m = getQuotaMetrics();
+      const renderKey = JSON.stringify([
+        m.status, m.left5hPct, m.leftWeekPct, m.reset5hText, m.resetWeekText, m.isWarn5h, m.isWarnWeek
+      ]);
+      if (bubbleMode === 'quota' && lastQuotaRenderKey === renderKey) return;
       bubbleMode = "quota";
-
-      let val5h = m.left5hPct;
-      let suf5h = "%";
-      let valWeek = m.leftWeekPct;
-      let sufWeek = "%";
-
-      if (val5h === null) { val5h='—'; suf5h=''; }
-      if (valWeek === null) { valWeek='—'; sufWeek=''; }
-      headerText = '剩余额度 · 官方';
+      lastQuotaRenderKey = renderKey;
+      const val5h = m.left5hPct === null ? '—' : m.left5hPct + '%';
+      const valWeek = m.leftWeekPct === null ? '—' : m.leftWeekPct + '%';
+      const headerText = {fresh:'剩余额度 · 官方', stale:'额度 · 已过期', waiting:'额度 · 等待同步'}[m.status];
       __gfwDOM.setHTML(textEl, `
         <div class="gfw-min-quota" id="gfw-roll-target">
           <div class="gfw-min-hdr">
             <span class="gfw-rainbow-txt">${headerText}</span>
-            <span class="gfw-min-refresh">↻</span>
           </div>
           <div class="gfw-min-block">
             <div class="gfw-min-row">
               <span class="gfw-min-label gfw-rainbow-txt">5 小时</span>
-              <span class="gfw-min-pct gfw-rainbow-num ${m.isWarn5h ? 'gfw-warn' : ''}" id="gfw-val-5h">${val5h}${suf5h}</span>
+              <span class="gfw-min-pct gfw-rainbow-num ${m.isWarn5h ? 'gfw-warn' : ''}" id="gfw-val-5h">${val5h}</span>
             </div>
             <div class="gfw-min-bar-track">
               <div class="gfw-min-bar-fill ${m.isWarn5h ? 'gfw-fill-warn' : ''}" style="width:${m.left5hPct ?? 0}%"></div>
             </div>
-            <div class="gfw-min-reset gfw-rainbow-txt">${m.reset5hText}</div>
+            <div class="gfw-min-reset gfw-rainbow-txt"></div>
           </div>
           <div class="gfw-min-block">
             <div class="gfw-min-row">
               <span class="gfw-min-label gfw-rainbow-txt">每周</span>
-              <span class="gfw-min-pct gfw-rainbow-num ${m.isWarnWeek ? 'gfw-warn' : ''}" id="gfw-val-week">${valWeek}${sufWeek}</span>
+              <span class="gfw-min-pct gfw-rainbow-num ${m.isWarnWeek ? 'gfw-warn' : ''}" id="gfw-val-week">${valWeek}</span>
             </div>
             <div class="gfw-min-bar-track">
               <div class="gfw-min-bar-fill ${m.isWarnWeek ? 'gfw-fill-warn' : ''}" style="width:${m.leftWeekPct ?? 0}%"></div>
             </div>
-            <div class="gfw-min-reset gfw-rainbow-txt">${m.resetWeekText}</div>
+            <div class="gfw-min-reset gfw-rainbow-txt"></div>
           </div>
         </div>
       `);
 
-      if (withRollAnim && m.left5hPct !== null && m.leftWeekPct !== null) {
-        if (anim5hId) cancelAnimationFrame(anim5hId);
-        if (animWeekId) cancelAnimationFrame(animWeekId);
-        const el5h = document.getElementById("gfw-val-5h");
-        const elWeek = document.getElementById("gfw-val-week");
-        anim5hId = animateValue(el5h, prevVal5h, val5h, suf5h, 480);
-        animWeekId = animateValue(elWeek, prevValWeek, valWeek, sufWeek, 520);
-      }
-      prevVal5h = val5h;
-      prevValWeek = valWeek;
+      const [fiveHourReset, weekReset] = textEl.querySelectorAll('.gfw-min-reset');
+      fiveHourReset.textContent = m.reset5hText;
+      weekReset.textContent = m.resetWeekText;
     }
 
     function pickWeightedQuote() {
-      const rawLines = (cfg.randomLines && cfg.randomLines.length) ? cfg.randomLines : DEFAULT_LINES;
-      const quotesOnly = rawLines.filter(x => x && x.text);
-      const pool = quotesOnly.length ? quotesOnly : DEFAULT_LINES;
-      const totalW = pool.reduce((acc, item) => acc + (Number(item.weight) || 1), 0);
-      let r = Math.random() * totalW;
-      let chosenIdx = 0;
-      for (let i = 0; i < pool.length; i++) {
-        r -= (Number(pool[i].weight) || 1);
-        if (r <= 0) {
-          chosenIdx = i;
-          break;
-        }
-      }
-      if (pool.length > 1 && chosenIdx === lastRandomIdx) {
-        chosenIdx = (chosenIdx + 1) % pool.length;
-      }
-      lastRandomIdx = chosenIdx;
-      return pool[chosenIdx];
+      const item = __gfwCompanion.pickQuoteForConfig(cfg, lastRandomText);
+      lastRandomText = item.text;
+      return item;
     }
 
-    function renderCatgirlQuoteBubble() {
+    function renderCatgirlQuoteBubble(explicitText) {
       bubbleMode = "quote";
-      const item = pickWeightedQuote();
-      textEl.style.opacity = "0";
-      setTimeout(() => {
-        __gfwDOM.setHTML(textEl, `
-          <div class="gfw-quote-box">
-            <div class="gfw-wrap-quote gfw-rainbow-txt">${item.text}</div>
-          </div>
-        `);
-        fitQuoteText();
-        textEl.style.opacity = "1";
-      }, 130);
+      const item = explicitText === undefined ? pickWeightedQuote() : { text: explicitText };
+      lastRandomText = item.text;
+      const box = document.createElement('div');
+      box.className = 'gfw-quote-box';
+      const line = document.createElement('div');
+      line.className = 'gfw-wrap-quote gfw-rainbow-txt';
+      line.textContent = item.text;
+      box.appendChild(line);
+      textEl.replaceChildren(box);
+      fitQuoteText();
+      textEl.style.opacity = '1';
     }
 
     function openBubble(autoCloseMs) {
@@ -1094,16 +1064,16 @@
       imgWrap.classList.add("gfw-jelly");
     }
 
-    // Real-time event recording with zero delay (<15ms)
+    // Ask the desktop host to refresh its official quota sample.
     let lastRecordedEventMs = 0;
     function recordRealTurnEvent() {
       console.info('[GFW_OFFICIAL_REFRESH]');
     }
 
-    refreshRealtimeUI = function (withAnim = false) {
+    refreshRealtimeUI = function () {
       syncMenuInputs();
       if (bubbleEl.classList.contains("gfw-open") && bubbleMode === "quota") {
-        renderQuotaBubble(withAnim, "剩余额度");
+        renderQuotaBubble();
       }
       if (typeof window.__gfwOnStateChange === "function") {
         window.__gfwOnStateChange(getQuotaMetrics(), ledger, cfg);
@@ -1151,7 +1121,7 @@
       ledger.sourceLabel = label;
       if (changed) {
         broadcastLedgerUpdate();
-        refreshRealtimeUI(true);
+        refreshRealtimeUI();
       }
     }
 
@@ -1169,7 +1139,7 @@
         document.removeEventListener("click", onPickClick, true);
         boundStatusbarEl = ev.target.closest('[class*="status"], [id*="status"], [class*="quota"], div, footer') || ev.target;
         scanPageStatusbar();
-        renderQuotaBubble(true, "剩余额度");
+        renderQuotaBubble();
         openBubble();
       };
       setTimeout(() => document.addEventListener("click", onPickClick, true), 80);
@@ -1242,6 +1212,7 @@
 
       const shouldFlipLeft = cfg.leftFlipOn && (cfg.anchorH === "left" || (cfg.posLeft + rect.width / 2 < vw * 0.25));
       root.classList.toggle("gfw-left", shouldFlipLeft);
+      window.GeminiFoxWidget?.companion?.positionDock();
 
       if (!withTransition) {
         requestAnimationFrame(() => root.classList.remove("gfw-dragging"));
@@ -1254,6 +1225,7 @@
 
     imgWrap.addEventListener("pointerdown", (e) => {
       if (e.button !== 0 && e.pointerType === "mouse") return;
+      if (e.isPrimary === false || dragState) return;
       e.preventDefault();
       imgWrap.setPointerCapture(e.pointerId);
 
@@ -1268,12 +1240,15 @@
         startY: e.clientY,
         origLeft: rect.left,
         origTop: rect.top,
-        moved: false
+        moved: false,
+        menuOpened: false
       };
 
       if (longPressTimer) clearTimeout(longPressTimer);
       longPressTimer = setTimeout(() => {
         if (dragState && !dragState.moved) {
+          dragState.menuOpened = true;
+          window.GeminiFoxWidget?.companion?.resetTouchSequence();
           toggleMenu();
         }
       }, 1350);
@@ -1285,14 +1260,16 @@
       const dy = e.clientY - dragState.startY;
       if (!dragState.moved && (dx * dx + dy * dy >= 9)) {
         dragState.moved = true;
+        window.GeminiFoxWidget?.companion?.resetTouchSequence();
         root.classList.add("gfw-dragging");
         if (longPressTimer) clearTimeout(longPressTimer);
       }
-      if (dragState.moved) {
+      if (dragState.moved && !cfg.companion?.positionLocked) {
         cfg.posLeft = dragState.origLeft + dx;
         cfg.posTop = dragState.origTop + dy;
         root.style.left = cfg.posLeft + "px";
         root.style.top = cfg.posTop + "px";
+        window.GeminiFoxWidget?.companion?.positionDock();
       }
     });
 
@@ -1303,30 +1280,40 @@
       playSynthSound("release");
 
       const wasMoved = dragState.moved;
+      const wasMenuOpened = dragState.menuOpened;
       dragState = null;
       root.classList.remove("gfw-dragging");
 
       if (wasMoved) {
         settlePosition(true);
-      } else {
+      } else if (!wasMenuOpened) {
         handleCatgirlClick();
       }
     }
 
     imgWrap.addEventListener("pointerup", endPointer);
-    imgWrap.addEventListener("pointercancel", endPointer);
+    imgWrap.addEventListener("pointercancel", () => {
+      window.GeminiFoxWidget?.companion?.resetTouchSequence();
+      if (longPressTimer) clearTimeout(longPressTimer);
+      imgWrap.classList.remove('gfw-pressed');
+      root.classList.remove('gfw-dragging');
+      if (dragState?.moved) settlePosition(true);
+      dragState = null;
+    });
 
     imgWrap.addEventListener("contextmenu", (e) => {
       e.preventDefault();
+      window.GeminiFoxWidget?.companion?.resetTouchSequence();
       toggleMenu();
     });
 
     function handleCatgirlClick() {
+      if (window.GeminiFoxWidget?.companion?.characterTap()) return;
       triggerJellyBounce();
 
       const isBubbleCurrentlyOpen = bubbleEl.classList.contains("gfw-open");
       if (!isBubbleCurrentlyOpen) {
-        renderQuotaBubble(true);
+        renderQuotaBubble();
         openBubble();
       } else {
         // Bubble already open -> keep dialog unchanged, only extend timer
@@ -1354,8 +1341,8 @@
 
     function positionMenu() {
       const r = root.getBoundingClientRect();
-      const mw = 320;
-      const mh = menu.offsetHeight || 360;
+      const mw = menu.getBoundingClientRect().width || Math.min(448, window.innerWidth - 24);
+      const mh = Math.min(menu.offsetHeight || 520, window.innerHeight - 24);
       let left = r.right - mw;
       if (root.classList.contains("gfw-left")) {
         left = r.left;
@@ -1364,9 +1351,14 @@
       let top = r.top - mh - 10;
       if (top < 10) {
         top = Math.min(window.innerHeight - mh - 10, r.bottom + 10);
+        if (r.bottom + mh + 12 > window.innerHeight) {
+          if (r.left >= mw + 24) left = r.left - mw - 16;
+          else if (window.innerWidth - r.right >= mw + 24) left = r.right + 16;
+          top = window.innerHeight - mh - 12;
+        }
       }
-      menu.style.left = Math.round(left) + "px";
-      menu.style.top = Math.round(top) + "px";
+      menu.style.left = Math.round(Math.max(12, Math.min(window.innerWidth - mw - 12, left))) + "px";
+      menu.style.top = Math.round(Math.max(12, Math.min(window.innerHeight - mh - 12, top))) + "px";
     }
 
     function toggleMenu(forceState) {
@@ -1376,6 +1368,7 @@
         menu.classList.add("gfw-show");
         menuBtn.classList.add("gfw-active");
         positionMenu();
+        menu.querySelector('[role="tab"][aria-selected="true"]')?.focus();
       } else {
         menu.classList.remove("gfw-show");
         menuBtn.classList.remove("gfw-active");
@@ -1450,6 +1443,7 @@
       cfg.posLeft = Math.round(isLeft ? anchorLeft : (anchorRight - newRect.width));
       root.style.left = cfg.posLeft + "px";
       root.style.top = cfg.posTop + "px";
+      window.GeminiFoxWidget?.companion?.positionDock();
       saveStorage(STORAGE_KEY_CFG, cfg);
     }
 
@@ -1476,7 +1470,7 @@
       cfg.customQuotaWeek = preset.quotaWeek;
       syncMenuInputs();
       saveStorage(STORAGE_KEY_CFG, cfg);
-      renderQuotaBubble(true);
+      renderQuotaBubble();
       openBubble();
       if (typeof window.__gfwOnStateChange === "function") window.__gfwOnStateChange(getQuotaMetrics(), ledger, cfg);
     });
@@ -1484,7 +1478,7 @@
     document.getElementById("gfw-display-mode").addEventListener("change", (e) => {
       cfg.displayMode = e.target.value;
       saveStorage(STORAGE_KEY_CFG, cfg);
-      renderQuotaBubble(true);
+      renderQuotaBubble();
       openBubble();
       if (typeof window.__gfwOnStateChange === "function") window.__gfwOnStateChange(getQuotaMetrics(), ledger, cfg);
     });
@@ -1523,13 +1517,13 @@
     document.getElementById("gfw-custom-quota").addEventListener("change", (e) => {
       cfg.customQuota5h = Math.max(1, parseInt(e.target.value, 10) || 50);
       saveStorage(STORAGE_KEY_CFG, cfg);
-      renderQuotaBubble(true);
+      renderQuotaBubble();
       if (typeof window.__gfwOnStateChange === "function") window.__gfwOnStateChange(getQuotaMetrics(), ledger, cfg);
     });
     document.getElementById("gfw-custom-week-quota").addEventListener("change", (e) => {
       cfg.customQuotaWeek = Math.max(1, parseInt(e.target.value, 10) || 500);
       saveStorage(STORAGE_KEY_CFG, cfg);
-      renderQuotaBubble(true);
+      renderQuotaBubble();
       if (typeof window.__gfwOnStateChange === "function") window.__gfwOnStateChange(getQuotaMetrics(), ledger, cfg);
     });
     document.getElementById("gfw-used-calibrate").addEventListener("change", (e) => {
@@ -1538,7 +1532,7 @@
       ledger.manualOffset5h = targetUsed - ledger.timestamps5h.length;
       ledger.sourceLabel = "手动校准同步";
       broadcastLedgerUpdate();
-      renderQuotaBubble(true);
+      renderQuotaBubble();
       if (typeof window.__gfwOnStateChange === "function") window.__gfwOnStateChange(getQuotaMetrics(), ledger, cfg);
     });
     document.getElementById("gfw-used-week-calibrate").addEventListener("change", (e) => {
@@ -1547,7 +1541,7 @@
       ledger.manualOffsetWeek = targetUsed - ledger.timestampsWeek.length;
       ledger.sourceLabel = "手动校准同步";
       broadcastLedgerUpdate();
-      renderQuotaBubble(true);
+      renderQuotaBubble();
       if (typeof window.__gfwOnStateChange === "function") window.__gfwOnStateChange(getQuotaMetrics(), ledger, cfg);
     });
     document.getElementById("gfw-btn-reset-today").addEventListener("click", () => {
@@ -1557,7 +1551,7 @@
       ledger.sourceLabel = "窗口已归零重置";
       broadcastLedgerUpdate();
       syncMenuInputs();
-      renderQuotaBubble(true);
+      renderQuotaBubble();
       openBubble();
       if (typeof window.__gfwOnStateChange === "function") window.__gfwOnStateChange(getQuotaMetrics(), ledger, cfg);
     });
@@ -1571,7 +1565,7 @@
     document.getElementById("gfw-warn-pct").addEventListener("change", (e) => {
       cfg.warnThresholdPct = Math.max(1, Math.min(90, parseInt(e.target.value, 10) || 20));
       saveStorage(STORAGE_KEY_CFG, cfg);
-      if (bubbleMode === "quota") renderQuotaBubble(false);
+      if (bubbleMode === "quota") renderQuotaBubble();
     });
     document.getElementById("gfw-snap-mode").addEventListener("change", (e) => {
       cfg.snapMode = e.target.value;
@@ -1596,17 +1590,17 @@
     });
 
     document.getElementById("gfw-btn-refresh").addEventListener("click", () => {
-      renderQuotaBubble(true);
+      renderQuotaBubble();
       openBubble();
     });
 
     window.addEventListener("resize", () => settlePosition(false));
 
     window.GeminiFoxWidget = {
-      openQuotaBubble: () => { renderQuotaBubble(true); openBubble(); },
+      openQuotaBubble: () => { renderQuotaBubble(); openBubble(); },
       showNextQuote: () => {
         if (!bubbleEl.classList.contains("gfw-open")) {
-          renderQuotaBubble(true);
+          renderQuotaBubble();
           openBubble();
         } else if (bubbleMode === "quota") {
           renderCatgirlQuoteBubble();
@@ -1623,7 +1617,7 @@
         cfg.posTop = window.innerHeight - root.getBoundingClientRect().height - 16;
         settlePosition(true);
         if (!bubbleEl.classList.contains("gfw-open")) {
-          renderQuotaBubble(false);
+          renderQuotaBubble();
           openBubble();
         }
       },
@@ -1633,7 +1627,7 @@
         cfg.posTop = window.innerHeight - r.height - 16;
         settlePosition(true);
         if (!bubbleEl.classList.contains("gfw-open")) {
-          renderQuotaBubble(false);
+          renderQuotaBubble();
           openBubble();
         }
       },
@@ -1644,7 +1638,7 @@
           cfg.customQuotaWeek = TIER_PRESETS[tierKey].quotaWeek;
           saveStorage(STORAGE_KEY_CFG, cfg);
           syncMenuInputs();
-          renderQuotaBubble(true);
+          renderQuotaBubble();
           openBubble();
           if (typeof window.__gfwOnStateChange === "function") window.__gfwOnStateChange(getQuotaMetrics(), ledger, cfg);
         }
@@ -1656,16 +1650,31 @@
         ledger.sourceLabel = "窗口已归零重置";
         broadcastLedgerUpdate();
         syncMenuInputs();
-        if (bubbleMode === "quota") renderQuotaBubble(true);
+        if (bubbleMode === "quota") renderQuotaBubble();
         if (typeof window.__gfwOnStateChange === "function") window.__gfwOnStateChange(getQuotaMetrics(), ledger, cfg);
       },
       scanStatusbar: scanPageStatusbar,
       getMetrics: getQuotaMetrics,
+      getLastQuote: () => lastRandomText,
       getLedger: () => ledger,
       getConfig: () => cfg
     };
 
-    window.addEventListener('gfw-official-quota', () => refreshRealtimeUI(false));
+    window.GeminiFoxWidget.companion = __gfwCompanion.mount({
+      root, menu, dom: __gfwDOM, getConfig: () => cfg,
+      saveConfig: () => saveStorage(STORAGE_KEY_CFG, cfg),
+      showQuote: (text, autoCloseMs) => { renderCatgirlQuoteBubble(text); openBubble(autoCloseMs); },
+      showQuota: () => { renderQuotaBubble(); openBubble(); },
+      closeBubble,
+      playSound: playSynthSound,
+      getMetrics: getQuotaMetrics,
+      getLastQuote: () => lastRandomText,
+      defaultImage: DEFAULT_FOX_IMG,
+      openMenu: () => toggleMenu(true), closeMenu: () => toggleMenu(false), positionMenu,
+      resetPosition: () => { cfg.posLeft = null; cfg.posTop = null; settlePosition(false); }
+    });
+
+    window.addEventListener('gfw-official-quota', () => refreshRealtimeUI());
     document.getElementById('gfw-btn-refresh').addEventListener('click', () => console.info('[GFW_OFFICIAL_REFRESH]'));
     for (const id of ['gfw-tier-select','gfw-display-mode','gfw-toggle-quota-panel','gfw-btn-sim-turn']) {
       const el=document.getElementById(id); if(el) { el.disabled=true; el.title='已使用 Google 官方双额度，自动同步'; }
@@ -1678,16 +1687,18 @@
     settlePosition(false);
     setTimeout(() => {
       scanPageStatusbar();
-      renderQuotaBubble(false);
-      openBubble();
+      if (!window.GeminiFoxWidget.companion.getState().reward.run) {
+        renderQuotaBubble();
+        openBubble();
+      }
       if (typeof window.__gfwOnStateChange === "function") window.__gfwOnStateChange(getQuotaMetrics(), ledger, cfg);
     }, 150);
 
-    // 1-second real-time heartbeat + statusbar DOM scanner so statusbar changes sync within milliseconds!
+    // Check the display deadline even when no new official sample arrives.
     setInterval(() => {
       scanPageStatusbar();
       if (bubbleMode === "quota" && bubbleEl.classList.contains("gfw-open")) {
-        renderQuotaBubble(false);
+        renderQuotaBubble();
       }
       if (typeof window.__gfwOnStateChange === "function") {
         window.__gfwOnStateChange(getQuotaMetrics(), ledger, cfg);

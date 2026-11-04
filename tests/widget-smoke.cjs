@@ -4,6 +4,8 @@ const assert = require('node:assert/strict');
 const { parseHTML } = require('linkedom');
 const filename = process.argv[2];
 const { window, document } = parseHTML('<!doctype html><html><head></head><body></body></html>');
+// linkedom exposes a read-only select.value; real browser controls are writable.
+Object.defineProperty(window.HTMLSelectElement.prototype,'value',{configurable:true,get(){return this.querySelector('option[selected]')?.value??this.querySelector('option')?.value??'';},set(value){for(const option of this.querySelectorAll('option'))option.toggleAttribute('selected',option.value===String(value));}});
 Object.defineProperty(window.Element.prototype, 'innerHTML', {
   configurable: true,
   get() { return ''; },

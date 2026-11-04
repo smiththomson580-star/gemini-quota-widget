@@ -15,9 +15,11 @@ for(const file of files){
   if(!file.startsWith(path.join(root,'third_party')+path.sep))deny.push(/[A-Z0-9._%+-]+@[A-Z0-9.-]+\.[A-Z]{2,}/i);
   if(deny.some(p=>p.test(text)))throw Error('Possible local or credential data in '+path.relative(root,file));
 }
-const asset=fs.readFileSync(path.join(root,'assets','catgirl.webp'));
-if(asset.toString('ascii',0,4)!=='RIFF'||asset.toString('ascii',8,12)!=='WEBP')throw Error('Invalid artwork');
-// Embedded image metadata is not needed by the widget and must not enter a release.
-for(let offset=12;offset+8<=asset.length;){const tag=asset.toString('ascii',offset,offset+4);const size=asset.readUInt32LE(offset+4);if(['EXIF','XMP '].includes(tag))throw Error('Artwork contains metadata');offset+=8+size+(size%2);}
+for(const file of files.filter(f=>f.endsWith('.webp'))){
+  const asset=fs.readFileSync(file);
+  if(asset.toString('ascii',0,4)!=='RIFF'||asset.toString('ascii',8,12)!=='WEBP')throw Error('Invalid artwork');
+  // Check both the preserved original and every derived sprite.
+  for(let offset=12;offset+8<=asset.length;){const tag=asset.toString('ascii',offset,offset+4);const size=asset.readUInt32LE(offset+4);if(['EXIF','XMP '].includes(tag))throw Error('Artwork contains metadata');offset+=8+size+(size%2);}
+}
 console.log('Release audit passed: '+files.length+' allowlisted files; no application archives, account state or image metadata.');
 module.exports={root,files};
