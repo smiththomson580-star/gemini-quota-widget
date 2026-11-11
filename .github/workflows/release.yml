@@ -1,0 +1,30 @@
+name: Release widget
+on:
+  push:
+    tags:
+      - 'v*'
+permissions:
+  contents: write
+jobs:
+  release:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: npm
+      - run: npm ci
+      - run: npm test
+      - run: npm run audit:release
+      - run: npm run release:zip
+      - name: Publish source and updater assets
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          $version = node -p "require('./package.json').version"
+          if ($env:GITHUB_REF_NAME -ne ('v'+$version)) { throw 'Tag must match package.json.' }
+          $assets = @('releases/gemini-quota-widget-'+$version+'.zip','dist/gemini-widget-update.json','dist/gemini-fox-widget.user.js','dist/official-quota.cjs','dist/desktop-updater.cjs','dist/desktop-hook.cjs','dist/archive-patcher.cjs','dist/client-watch.cjs')
+          gh release create $env:GITHUB_REF_NAME --verify-tag --title ('Gemini 猫猫挂件 '+$version) --generate-notes @assets
+          if ($LASTEXITCODE -ne 0) { throw 'Release upload failed.' }

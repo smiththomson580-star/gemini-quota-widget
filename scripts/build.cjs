@@ -2,6 +2,7 @@
 const fs=require('node:fs');
 const path=require('node:path');
 const vm=require('node:vm');
+const crypto=require('node:crypto');
 const {buildSync}=require('esbuild');
 const root=path.resolve(__dirname,'..');
 const helper=buildSync({entryPoints:[path.join(root,'src','dom-builder.mjs')],bundle:true,platform:'browser',format:'iife',globalName:'__gfwDOM',minify:true,write:false}).outputFiles[0].text;
@@ -9,10 +10,19 @@ const companion=buildSync({entryPoints:[path.join(root,'src','companion.mjs')],b
 let widget=fs.readFileSync(path.join(root,'src','widget.js'),'utf8');
 if(!widget.includes('__GFW_DEFAULT_SPRITE__') || !widget.includes("  'use strict';"))throw Error('Unknown widget source');
 const sprite=fs.readFileSync(path.join(root,'assets','catgirl-hd.webp')).toString('base64');
-widget=widget.replace('__GFW_DEFAULT_SPRITE__','data:image/webp;base64,'+sprite).replace("  'use strict';","  'use strict';\n"+helper+'\n'+companion);
+widget=widget.replace('__GFW_DEFAULT_SPRITE__','data:image/webp;base64,'+sprite).replace("  'use strict';",()=> "  'use strict';\n"+helper+'\n'+companion);
 const notices=['parse5','entities'].map(n=>fs.readFileSync(path.join(root,'third_party',n+'-LICENSE.txt'),'utf8')).join('\n\n');
 widget+='\n/* Third-party license notices\n'+notices.replace(/\*\//g,'* /')+'\n*/\n';
 new vm.Script(widget);
 const dist=path.join(root,'dist');fs.mkdirSync(dist,{recursive:true});
 fs.writeFileSync(path.join(dist,'gemini-fox-widget.user.js'),widget);
+const runtimeFiles=['gemini-fox-widget.user.js','official-quota.cjs','desktop-updater.cjs','desktop-hook.cjs','archive-patcher.cjs','client-watch.cjs'];
+for(const name of runtimeFiles.slice(1))fs.copyFileSync(path.join(root,'src',name),path.join(dist,name));
+const version=JSON.parse(fs.readFileSync(path.join(root,'package.json'),'utf8')).version;
+fs.writeFileSync(path.join(dist,'widget-version.json'),JSON.stringify({version,protocol:1,adapterProtocol:1}));
+const updateFiles=runtimeFiles.map(name=>{
+  const bytes=fs.readFileSync(path.join(dist,name));
+  return {name,size:bytes.length,sha256:crypto.createHash('sha256').update(bytes).digest('hex')};
+});
+fs.writeFileSync(path.join(dist,'gemini-widget-update.json'),JSON.stringify({version,protocol:1,adapterProtocol:1,files:updateFiles},null,2));
 console.log('Built desktop renderer with bundled artwork and license notices.');

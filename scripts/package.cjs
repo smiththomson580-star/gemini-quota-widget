@@ -10,6 +10,6 @@ const version=JSON.parse(fs.readFileSync(path.join(root,'package.json'),'utf8'))
 if(!/^\d+\.\d+\.\d+$/.test(version))throw Error('Release version must be a numeric semantic version');
 const zip=path.join(releases,'gemini-quota-widget-'+version+'.zip');
 if(fs.existsSync(zip))throw Error('Release ZIP already exists; choose a new version or remove it explicitly');
-const args=['-a','-c','-f',zip,...files.map(f=>path.relative(root,f)),path.join('dist','gemini-fox-widget.user.js')];
+const args=['-a','-c','-f',zip,...files.map(f=>path.relative(root,f)),...['gemini-fox-widget.user.js','official-quota.cjs','desktop-updater.cjs','desktop-hook.cjs','archive-patcher.cjs','client-watch.cjs','widget-version.json','gemini-widget-update.json'].map(f=>path.join('dist',f))];
 const packed=spawnSync('tar',args,{cwd:root,stdio:'inherit'});if(packed.status!==0)process.exit(packed.status||1);
 console.log('Created '+zip);

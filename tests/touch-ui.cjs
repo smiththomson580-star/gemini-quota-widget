@@ -35,7 +35,7 @@ function mount(){
 }
 {
   const h=mount();const before=h.api.companion.getState().affection;
-  h.tap();assert.ok(h.document.querySelector('#gfw-text').textContent.includes('5 小时'),'ordinary tap still opens quota');
+  h.tap();assert.match(h.document.querySelector('#gfw-text').textContent,/5 小时/,'ordinary tap opens quota');
   for(let n=0;n<3;n++)h.tap();assert.equal(h.root.classList.contains('cp-hissing'),false);
   h.tap();assert.equal(h.root.classList.contains('cp-hissing'),true,'the fifth rapid character tap must hiss');
   assert.ok(h.document.querySelector('#gfw-text').textContent.includes('哈'));
@@ -54,6 +54,14 @@ for(const kind of ['drag','locked-drag','cancel','contextmenu','longpress']){
   h.tap();assert.equal(h.root.classList.contains('cp-hissing'),false,kind+' must break the tap sequence');
 }
 {
+  const h=mount();for(let i=0;i<5;i++)h.tap();
+  h.api.companion.action('pet');
+  assert.equal(h.root.classList.contains('cp-hissing'),false);
+  assert.match(h.document.querySelector('#gfw-text').textContent,/耳朵先借你摸/);
+  h.advance(720);
+  assert.match(h.document.querySelector('#gfw-text').textContent,/摸头犯规/);
+}
+{
   const h=mount();h.api.getConfig().companion.enabled=false;for(let n=0;n<7;n++)h.tap();
   assert.equal(h.root.classList.contains('cp-hissing'),false,'disabled fun means no hidden reactions');assert.equal(h.sounds(),0);
 }
@@ -67,13 +75,13 @@ for(const kind of ['drag','locked-drag','cancel','contextmenu','longpress']){
   const h=mount();h.api.companion.action('sleep');h.tap();
   assert.equal(h.api.companion.getState().sleeping,false,'a gentle tap wakes a sleeping cat');
   assert.equal(h.root.classList.contains('cp-waking'),true);
-  assert.ok(h.document.querySelector('#gfw-text').textContent.includes('5 小时'),'waking preserves quota access');
+  assert.match(h.document.querySelector('#gfw-text').textContent,/5 小时/,'waking preserves quota access');
   h.advance(1000);assert.equal(h.root.classList.contains('cp-waking'),false);
 }
 {
   const h=mount();h.api.companion.action('pet');
   function enter(repeat=false){const e=new h.window.Event('keydown',{bubbles:true});e.key='Enter';e.repeat=repeat;h.wrap.dispatchEvent(e);h.advance(100);}
-  enter();assert.ok(h.document.querySelector('#gfw-text').textContent.includes('5 小时'),'keyboard quota access must not be trapped behind an open quote');
+  enter();assert.match(h.document.querySelector('#gfw-text').textContent,/5 小时/,'keyboard activation opens quota from an open quote');
   for(let n=0;n<6;n++)enter(true);
   assert.equal(h.root.classList.contains('cp-hissing'),false,'holding a key is not repeated deliberate taps');
   for(let n=0;n<4;n++)enter();

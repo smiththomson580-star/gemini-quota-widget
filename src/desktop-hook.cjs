@@ -1,14 +1,43 @@
 // Load the user's widget in the Gemini web page without changing renderer permissions.
 ;(() => {
-  const { app, webContents, WebContentsView } = require('electron');
+  const { app, webContents, WebContentsView, net } = require('electron');
   const fs = require('fs');
   const path = require('path');
-  const sourceFile = path.join(process.resourcesPath, 'gemini-fox-widget', 'gemini-fox-widget.user.js');
+  const crypto = require('crypto');
+  const sharedDirectory = path.resolve(process.resourcesPath, '..', '..', 'gemini-fox-widget');
+  const widgetDirectory = fs.existsSync(path.join(sharedDirectory, 'widget-version.json')) ? sharedDirectory : path.join(process.resourcesPath, 'gemini-fox-widget');
+  const sourceFile = path.join(widgetDirectory, 'gemini-fox-widget.user.js');
   const statusFile = path.join(app.getPath('userData'), 'gemini-fox-widget-status.json');
   const attached = new WeakSet();
   const collectors = new WeakSet();
   const sessions = new Map();
-  const { parseUsageRows, readUsagePage } = require(path.join(process.resourcesPath, 'gemini-fox-widget', 'official-quota.cjs'));
+  const updateTargets = new Set();
+  let updateState = { phase: 'unsupported', message: '请先手动安装带更新组件的新版挂件。' };
+  let updater = null;
+  const updateTokens = new WeakMap();
+  async function sendUpdateState(contents) {
+    if (contents.isDestroyed() || !contents.getURL().startsWith('https://gemini.google.com/')) return;
+    try {
+      await contents.executeJavaScript('window.__gfwUpdateState=' + JSON.stringify(updateState) + ';window.dispatchEvent(new Event("gfw-widget-update"));', false);
+    } catch (_) {}
+  }
+  try {
+    const { createUpdater } = require(path.join(widgetDirectory, 'desktop-updater.cjs'));
+    updater = createUpdater({
+      directory: path.dirname(sourceFile),
+      appVersion: app.getVersion(),
+      fetch: (url, options) => net.fetch(url, options),
+      onState: state => {
+        updateState = state;
+        for (const target of updateTargets) {
+          if (target.isDestroyed()) updateTargets.delete(target);
+          else void sendUpdateState(target);
+        }
+      }
+    });
+    updateState = updater.initialState();
+  } catch (_) {}
+  const { parseUsageRows, readUsagePage } = require(path.join(widgetDirectory, 'official-quota.cjs'));
   const quotaFile = path.join(app.getPath('userData'), 'gemini-official-quota.json');
   function startQuotaReader(target) {
     if (sessions.has(target.session)) return sessions.get(target.session);
@@ -70,7 +99,9 @@
       rootCount: document.querySelectorAll('#gemini-fox-widget-root').length,
       imageLoaded: !!(image && image.complete && image.naturalWidth > 0),
       inViewport: !!(rect && rect.right > 0 && rect.bottom > 0 && rect.left < innerWidth && rect.top < innerHeight),
-      menuPresent: !!document.getElementById('gfw-menu')
+      menuPresent: !!document.getElementById('gfw-menu'),
+      widgetVersion: root?.dataset.gfwVersion || null,
+      updaterReady: !!window.__gfwUpdateState && window.__gfwUpdateState.phase !== 'unsupported'
     };
   })()`;
   function attach(contents) {
@@ -81,7 +112,11 @@
         if(collectors.has(contents))return;
         const url = new URL(contents.getURL());
         if (url.protocol !== 'https:' || url.hostname !== 'gemini.google.com') return;
-        const source = fs.readFileSync(sourceFile, 'utf8');
+        const token = '[GFW_WIDGET_UPDATE:' + crypto.randomBytes(24).toString('hex') + ']';
+        updateTokens.set(contents, token);
+        updateTargets.add(contents);
+        await sendUpdateState(contents);
+        const source = fs.readFileSync(sourceFile, 'utf8').replaceAll('__GFW_UPDATE_REQUEST__', token);
         const outcome = await contents.executeJavaScript('(() => { try {\n' + source + '\n;return {ok:true}; } catch(error) { return {ok:false, error:String(error.message || error), stack:String(error.stack || "")}; } })()', false);
         if (!outcome.ok) { report(outcome); return; }
         const quota=startQuotaReader(contents);quota.targets.add(contents);
@@ -102,7 +137,12 @@
     };
     contents.on('dom-ready', inject);
     contents.on('console-message', (_event, _level, message) => {
-      if(message==='[GFW_OFFICIAL_REFRESH]' && !collectors.has(contents))sessions.get(contents.session)?.refresh();
+      const text = typeof _event?.message === 'string' ? _event.message : message;
+      if(text==='[GFW_OFFICIAL_REFRESH]' && !collectors.has(contents))sessions.get(contents.session)?.refresh();
+      if(text===updateTokens.get(contents) && text && !collectors.has(contents) && contents.getURL().startsWith('https://gemini.google.com/')) {
+        if (_event.frame && _event.frame !== contents.mainFrame) return;
+        void updater?.checkAndInstall();
+      }
     });
     if (contents.getURL().startsWith('https://gemini.google.com/')) inject();
   }

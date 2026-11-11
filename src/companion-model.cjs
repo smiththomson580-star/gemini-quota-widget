@@ -2,8 +2,8 @@
 const dance=require('./dance-model.cjs');
 
 const BUILTIN_QUOTES = [
-  ['meme','小基基，先别急着生成，\n让我蹭蹭你的桌面。'],
-  ['meme','好猫猫认证：\n今天也有认真陪你摸鱼。'],
+  ['meme','小基基...'],
+  ['meme','好猫猫...'],
   ['meme','小猫咪能有什么坏心思？\n只是想按住你的光标罢了。'],
   ['meme','猫猫祟祟地路过，\n偷偷给你盖个爪印。'],
   ['meme','喵门已开，\n烦恼请排队出门。'],
@@ -14,12 +14,13 @@ const BUILTIN_QUOTES = [
   ['meme','你的鼠标很好，\n现在归猫猫保管。'],
   ['meme','论文可以慢慢改，\n罐罐必须现在开。'],
   ['meme','猫猫 CPU 有点热，\n申请一口小鱼干散热。'],
+  ['meme','！？极其极其？！'],
   ['sweet','耳朵不许乱摸……\n刚才那次就算了。'],
-  ['sweet','好猫猫已经就位，\n摸摸头就可以充电。'],
+  ['sweet','猫猫喜欢你捏，喵～'],
   ['sweet','今天辛苦啦，\n送你一枚软乎乎的爪印。'],
   ['sweet','累了就歇一会儿，\n我替你守着桌面。'],
   ['sweet','再戳我星星发饰……\n真的要掉下来了。'],
-  ['sweet','小基基在忙，\n我负责把今天变可爱。'],
+  ['sweet','我很好用的，主人不要抛弃我好不好喵～'],
   ['sweet','不必每次都满分，\n今天的你也值得被贴贴。'],
   ['sweet','呼噜声已连接，\n你的专属猫猫在线。'],
   ['sweet','允许你摸一下。\n嗯……再一下也行。'],
@@ -37,14 +38,16 @@ const BUILTIN_QUOTES = [
 const DEFAULTS = Object.freeze({
   name:'星糖', enabled:true, quickDock:true, reducedMotion:false, danceEnabled:true,
   theme:'lilac', opacity:1, positionLocked:false,
-  builtins:true, quoteGroup:'all', customLines:[], focusMinutes:25, breakMinutes:5
+  builtins:true, quoteGroup:'all', customLines:[], focusMinutes:25, breakMinutes:5,
+  reactionSequences:true, quietFocus:true, dayReview:true, jokerPersona:'actor'
 });
 const bound=(v,min,max,fallback)=>typeof v==='number' && Number.isFinite(v)?Math.min(max,Math.max(min,v)):fallback;
 const cleanLines=lines=>Array.isArray(lines)?[...new Set(lines.filter(x=>typeof x==='string').map(x=>x.trim().slice(0,80)).filter(Boolean))].slice(0,40):[];
 function normalizePreferences(raw={}) {
   if(!raw || typeof raw!=='object')raw={};
   const p={...DEFAULTS,customLines:cleanLines(raw.customLines)};
-  for(const key of ['enabled','quickDock','reducedMotion','positionLocked','builtins','danceEnabled'])if(typeof raw[key]==='boolean')p[key]=raw[key];
+  for(const key of ['enabled','quickDock','reducedMotion','positionLocked','builtins','danceEnabled','reactionSequences','quietFocus','dayReview'])if(typeof raw[key]==='boolean')p[key]=raw[key];
+  p.jokerPersona=raw.jokerPersona==='honest'?'honest':'actor';
   p.name=typeof raw.name==='string' && raw.name.trim()?raw.name.trim().slice(0,20):DEFAULTS.name;
   p.theme=['lilac','peach','night'].includes(raw.theme)?raw.theme:DEFAULTS.theme;
   p.quoteGroup=['all','meme','sweet','work'].includes(raw.quoteGroup)?raw.quoteGroup:'all';
@@ -66,7 +69,8 @@ function pickQuote(pool,lastText='',random=Math.random) {
   const available=pool.length>1?pool.filter(q=>q.text!==lastText):pool;
   return available[Math.min(available.length-1,Math.max(0,Math.floor(random()*available.length)))] || {group:'custom',text:'喵～\n在台词模块写一句专属问候吧。'};
 }
-function idleTimer(){return {status:'idle',phase:'focus',durationMs:0,remainingMs:0,deadline:null};}
+const workModel=require('./work-model.cjs');
+function idleTimer(){return {status:'idle',phase:'focus',durationMs:0,remainingMs:0,deadline:null,goal:'',goalResult:null,finishedAt:null};}
 function normalizeState(raw={},now=Date.now()) {
   if(!raw||typeof raw!=='object')raw={};
   const counts={};for(const k of ['pet','feed','play'])counts[k]=Math.floor(bound(raw.counts?.[k],0,1000000,0));
@@ -75,12 +79,15 @@ function normalizeState(raw={},now=Date.now()) {
   const t=raw.timer;
   if(t && ['running','paused','done'].includes(t.status) && Number.isFinite(t.durationMs) && t.durationMs>=60000 && t.durationMs<=7200000) {
     timer={status:t.status,phase:t.phase==='break'?'break':'focus',durationMs:t.durationMs,remainingMs:bound(t.remainingMs,0,t.durationMs,t.durationMs),deadline:null};
+    timer.goal=timer.phase==='focus'?workModel.cleanText(t.goal):'';
+    timer.goalResult=t.status==='done'&&typeof t.goalResult==='boolean'?t.goalResult:null;
+    timer.finishedAt=t.status==='done'&&Number.isFinite(t.finishedAt)&&t.finishedAt>0&&t.finishedAt<=now?t.finishedAt:null;
     if(t.status==='running') {
       if(typeof t.deadline==='number' && Number.isFinite(t.deadline) && t.deadline>0 && t.deadline<=now+7200000)timer.deadline=t.deadline;
       else timer=idleTimer();
     }
   }
-  return {affection:Math.floor(bound(raw.affection,0,100,30)),counts,lastActionAt,sleeping:raw.sleeping===true,focusCompleted:Math.floor(bound(raw.focusCompleted,0,1000000,0)),timer,reward:dance.normalizeReward(raw.reward,now)};
+  return {affection:Math.floor(bound(raw.affection,0,100,30)),counts,lastActionAt,sleeping:raw.sleeping===true,focusCompleted:Math.floor(bound(raw.focusCompleted,0,1000000,0)),timer,reward:dance.normalizeReward(raw.reward,now),work:workModel.normalize(raw.work)};
 }
 const actionRules = new Map([
   ['pet', { cooldownMs: 2000, gain: 2 }],
@@ -108,11 +115,11 @@ function interact(state,action,now=Date.now()) {
   next.sleeping=false;
   return {accepted:true,state:next,retryAfterMs:0};
 }
-function startTimer(state,phase,minutes,now=Date.now()) {
+function startTimer(state,phase,minutes,now=Date.now(),goal='') {
   const next=normalizeState(state,now);
   const kind=phase==='break'?'break':'focus';
   const durationMs=Math.round(bound(minutes,kind==='break'?1:5,kind==='break'?30:120,kind==='break'?5:25))*60000;
-  next.timer={status:'running',phase:kind,durationMs,remainingMs:durationMs,deadline:now+durationMs};
+  next.timer={...idleTimer(),status:'running',phase:kind,durationMs,remainingMs:durationMs,deadline:now+durationMs,goal:kind==='focus'?workModel.cleanText(goal):''};
   return next;
 }
 function tickTimer(state,now=Date.now()) {
@@ -121,7 +128,16 @@ function tickTimer(state,now=Date.now()) {
   let completed=false;
   if(t.status==='running') {
     t.remainingMs=Math.max(0,t.deadline-now);
-    if(t.remainingMs===0){t.status='done';t.deadline=null;completed=true;if(t.phase==='focus')next.focusCompleted=Math.min(1000000,next.focusCompleted+1);}
+    if(t.remainingMs===0){
+      t.finishedAt=t.deadline;
+      t.status='done';t.deadline=null;completed=true;
+      if(t.phase==='focus'){
+        next.focusCompleted=Math.min(1000000,next.focusCompleted+1);
+        const day=workModel.getDay(next.work,t.finishedAt);
+        day.rounds++;
+        day.minutes+=Math.round(t.durationMs/60000);
+      }
+    }
   }
   return {state:next,completed};
 }

@@ -470,6 +470,10 @@
       .gfw-root.gfw-left .gfw-text {
         transform: translate(-50%, -50%) scaleX(-1);
       }
+      .gfw-text:has(> .gfw-quote-box) {
+        width: 62%;
+        height: 42%;
+      }
       .gfw-min-quota {
         width: 100%;
         display: flex;
@@ -551,18 +555,19 @@
         display: flex;
         align-items: center;
         justify-content: center;
-        padding: calc(var(--gfw-u) * 6);
+        padding: 0 4px;
         box-sizing: border-box;
       }
       .gfw-wrap-quote {
-        font-size: calc(var(--gfw-u) * 54);
+        font-size: calc(var(--gfw-u) * 76);
         font-weight: 800;
-        line-height: 1.42;
+        line-height: 1.24;
         text-align: center;
+        text-wrap: balance;
         max-width: 100%;
         white-space: pre-line;
-        word-break: break-word;
         overflow-wrap: anywhere;
+        line-break: strict;
       }
       .gfw-menu-btn {
         position: absolute;
@@ -754,7 +759,7 @@
           <div class="gfw-text" id="gfw-text"></div>
           <div class="gfw-bubble-hitbox" id="gfw-bubble-hitbox" title="点击切换猫娘台词 / 再次点击关闭气泡"></div>
         </div>
-        <div class="gfw-img-wrap" id="gfw-img-wrap" title="单击猫娘弹出实时额度 / Q弹一下 · 单击气泡框切换台词 · 右键打开菜单">
+        <div class="gfw-img-wrap" id="gfw-img-wrap" title="单击查看双额度 · 右键打开菜单">
           <img class="gfw-img" id="gfw-img" alt="Gemini Cat/Fox Girl Widget" />
         </div>
       </div>
@@ -957,19 +962,23 @@
     let lastQuotaRenderKey = null;
 
     function fitQuoteText() {
-      const qEl = textEl.querySelector(".gfw-wrap-quote");
-      if (!qEl) return;
-      const len = (qEl.textContent || "").length;
-      if (len > 42) {
-        qEl.style.fontSize = "calc(var(--gfw-u) * 38)";
-        qEl.style.lineHeight = "1.30";
-      } else if (len > 24) {
-        qEl.style.fontSize = "calc(var(--gfw-u) * 46)";
-        qEl.style.lineHeight = "1.36";
-      } else {
-        qEl.style.fontSize = "calc(var(--gfw-u) * 54)";
-        qEl.style.lineHeight = "1.42";
+      const line = textEl.querySelector(".gfw-wrap-quote");
+      const box = line?.parentElement;
+      if (!box?.clientHeight || !box.clientWidth) return;
+
+      // Use the browser's line wrapping so mixed scripts and manual breaks fit too.
+      let smallest = 1;
+      let largest = Math.min(48, Math.floor(box.clientHeight * 0.36));
+      while (smallest < largest) {
+        const size = Math.ceil((smallest + largest) / 2);
+        line.style.fontSize = size + "px";
+        if (line.offsetHeight <= box.clientHeight && line.scrollWidth <= line.clientWidth) {
+          smallest = size;
+        } else {
+          largest = size - 1;
+        }
       }
+      line.style.fontSize = smallest + "px";
     }
 
     function renderQuotaBubble() {
@@ -1163,6 +1172,7 @@
     function applyScaleAndClasses() {
       root.style.setProperty("--gfw-scale", cfg.scale);
       root.classList.toggle("gfw-hide-btn", !!cfg.hideMenuBtn);
+      if (bubbleMode === "quote") fitQuoteText();
     }
 
     function settlePosition(withTransition = true) {
@@ -1364,6 +1374,7 @@
     function toggleMenu(forceState) {
       const isShow = forceState !== undefined ? forceState : !menu.classList.contains("gfw-show");
       if (isShow) {
+        window.GeminiFoxWidget?.companion?.hidePanels();
         syncMenuInputs();
         menu.classList.add("gfw-show");
         menuBtn.classList.add("gfw-active");
@@ -1666,6 +1677,7 @@
       showQuote: (text, autoCloseMs) => { renderCatgirlQuoteBubble(text); openBubble(autoCloseMs); },
       showQuota: () => { renderQuotaBubble(); openBubble(); },
       closeBubble,
+      requestUpdate: () => console.info('__GFW_UPDATE_REQUEST__'),
       playSound: playSynthSound,
       getMetrics: getQuotaMetrics,
       getLastQuote: () => lastRandomText,

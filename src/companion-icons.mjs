@@ -1,4 +1,6 @@
 const paths={
+  memo:'<rect x="5" y="3" width="15" height="18" rx="3"/><path d="M3 8h4m-4 4h4m-4 4h4m4-7h5m-5 4h5"/>',
+  joker:'<rect x="4" y="3" width="16" height="18" rx="3"/><path d="m12 7 3 5-3 5-3-5 3-5Z"/>',
   pet:'<path d="M12 20s-8-4.8-8-10a4.5 4.5 0 0 1 8-2.8A4.5 4.5 0 0 1 20 10c0 5.2-8 10-8 10Z"/>',
   feed:'<path d="M4 12c3-5 9-7 13 0-4 7-10 5-13 0Zm13 0 4-4v8l-4-4Z"/><circle cx="8" cy="11" r=".7" fill="currentColor" stroke="none"/>',
   play:'<path d="m4 21 8-8m4-10 1.5 4.5L22 9l-4.5 1.5L16 15l-1.5-4.5L10 9l4.5-1.5L16 3ZM5 4v4M3 6h4"/>',
