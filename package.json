@@ -1,6 +1,6 @@
 {
   "name": "gemini-quota-widget",
-  "version": "0.7.6",
+  "version": "0.7.7",
   "private": true,
   "description": "Gemini Windows floating catgirl widget with official five-hour and weekly usage",
   "license": "MIT",
